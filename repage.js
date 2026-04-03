@@ -69,6 +69,12 @@
         "main",
       ],
     },
+    {
+      host: "google.com",
+      name: "google-search",
+      // Only activated on /search path (enforced in checkAndStart)
+      selectors: ["#rso", "#search", "#main", "body"],
+    },
   ];
 
   // =============================================
@@ -104,6 +110,30 @@
     { host: "character.ai", name: "character" },
     { host: "huggingface.co", name: "hf" },
   ];
+
+  // Sidebar/history panel selectors for AI chat sites.
+  // These are full-height panels skipped by the generic sub-scroll height filter,
+  // so we attach them explicitly after AI chat init.
+  var AI_SIDEBAR_SELECTORS = {
+    chatgpt: [
+      "nav[aria-label='Chat history']",
+      "nav div[class*='overflow-y-auto']",
+      "nav[class*='overflow']",
+    ],
+    claude: [
+      "nav[aria-label*='conversation']",
+      "nav div[class*='overflow']",
+      "[data-testid='conversation-list']",
+    ],
+    gemini: [
+      "nav[class*='overflow']",
+      "chat-history-list",
+      "[class*='history-list']",
+    ],
+    perplexity: ["nav div[class*='overflow']", "[class*='thread-list']"],
+    copilot: ["nav", "[class*='thread-list']"],
+    mistral: ["nav div[class*='overflow']", "[class*='conversation-list']"],
+  };
 
   var AI_SCROLL_SELECTORS = {
     chatgpt: [
@@ -701,9 +731,14 @@
       }
       bar.style.display = "flex";
 
+      // Scale bar content to available width
+      var w = el.clientWidth || 300;
+      var showNumbers = w >= 220;
+
+      // Prev arrow
       bar.appendChild(
         makeSubBtn(
-          "\u2039",
+          "‹",
           state.page > 1,
           function () {
             goTo(state.page - 1);
@@ -712,36 +747,50 @@
         ),
       );
 
-      var nums = getPageNumbers(state.page, state.totalPages);
-      for (var i = 0; i < nums.length; i++) {
-        if (nums[i] === "dots") {
-          var d = document.createElement("span");
-          d.textContent = "\u2026";
-          d.style.cssText =
-            "color:" +
-            dotsCol() +
-            ";padding:0 3px;font-size:12px;" +
-            "display:flex;align-items:center;";
-          bar.appendChild(d);
-        } else {
-          (function (pn) {
-            bar.appendChild(
-              makeSubBtn(
-                String(pn),
-                true,
-                function () {
-                  goTo(pn);
-                },
-                pn === state.page,
-              ),
-            );
-          })(nums[i]);
+      if (showNumbers) {
+        // Numbered page buttons with smart truncation
+        var nums = getPageNumbers(state.page, state.totalPages);
+        for (var i = 0; i < nums.length; i++) {
+          if (nums[i] === "dots") {
+            var d = document.createElement("span");
+            d.textContent = "…";
+            d.style.cssText =
+              "color:" +
+              dotsCol() +
+              ";padding:0 3px;font-size:11px;" +
+              "display:flex;align-items:center;";
+            bar.appendChild(d);
+          } else {
+            (function (pn) {
+              bar.appendChild(
+                makeSubBtn(
+                  String(pn),
+                  true,
+                  function () {
+                    goTo(pn);
+                  },
+                  pn === state.page,
+                ),
+              );
+            })(nums[i]);
+          }
         }
+      } else {
+        // Narrow: just show page indicator in centre
+        var info = document.createElement("span");
+        info.textContent = state.page + "/" + state.totalPages;
+        info.style.cssText =
+          "color:" +
+          infoCol() +
+          ";font-size:10px;display:flex;flex:1;" +
+          "align-items:center;justify-content:center;padding:0 4px;white-space:nowrap;";
+        bar.appendChild(info);
       }
 
+      // Next arrow
       bar.appendChild(
         makeSubBtn(
-          "\u203a",
+          "›",
           state.page < state.totalPages,
           function () {
             goTo(state.page + 1);
@@ -749,20 +798,11 @@
           false,
         ),
       );
-
-      var info = document.createElement("span");
-      info.textContent = state.page + "/" + state.totalPages;
-      info.style.cssText =
-        "color:" +
-        infoCol() +
-        ";font-size:10px;display:flex;" +
-        "align-items:center;padding:0 6px;white-space:nowrap;";
-      bar.appendChild(info);
     }
 
     var bar = document.createElement("div");
     bar.style.cssText =
-      "position:sticky;bottom:0;left:0;width:100%;height:32px;" +
+      "position:sticky;bottom:0;left:0;width:100%;height:26px;" +
       "display:flex;flex-direction:row;justify-content:center;" +
       "align-items:stretch;background:" +
       barBg() +
@@ -805,7 +845,7 @@
     btn.textContent = label;
     btn.style.cssText =
       "display:flex;align-items:center;justify-content:center;" +
-      "height:100%;padding:0 8px;border:none;" +
+      "height:100%;padding:0 6px;border:none;" +
       "border-right:1px solid " +
       btnBorder() +
       ";" +
@@ -815,7 +855,7 @@
       "color:" +
       (isActive ? btnColAct() : btnCol()) +
       ";" +
-      "font-size:13px;font-weight:" +
+      "font-size:11px;font-weight:" +
       (isActive ? "700" : "500") +
       ";" +
       "cursor:" +
@@ -825,7 +865,7 @@
       (enabled ? "1" : "0.35") +
       ";" +
       "pointer-events:auto;position:static;" +
-      "min-width:28px;box-sizing:border-box;border-radius:0;";
+      "min-width:22px;box-sizing:border-box;border-radius:0;";
     if (enabled && onClick) {
       btn.addEventListener("click", function (e) {
         e.preventDefault();
@@ -1013,6 +1053,29 @@
     return false;
   }
 
+  // Attach sub-scrollers to AI chat sidebars (full-height panels that the generic
+  // height filter would skip). Called after the main AI chat thread is initialised.
+  function attachAIChatSidebars() {
+    if (!isAIChat || !aiChatType) return;
+    var sels = AI_SIDEBAR_SELECTORS[aiChatType];
+    if (!sels) return;
+    for (var s = 0; s < sels.length; s++) {
+      var el = document.querySelector(sels[s]);
+      if (!el || el._rpSub) continue;
+      if (el.scrollHeight <= el.clientHeight + 10) continue;
+      var cs = window.getComputedStyle(el);
+      var ov = cs.overflowY || cs.overflow;
+      if (
+        ov !== "auto" &&
+        ov !== "scroll" &&
+        ov !== "overlay" &&
+        ov !== "hidden"
+      )
+        continue;
+      attachSubScroller(el);
+    }
+  }
+
   function detectSocialSite() {
     var host = window.location.hostname.replace("www.", "");
     for (var i = 0; i < SOCIAL_SITES.length; i++) {
@@ -1174,6 +1237,12 @@
   // =============================================
   function checkAndStart() {
     var host = (window.location.hostname || "").replace("www.", "");
+    var path = window.location.pathname || "";
+
+    // www.google.com: only run on /search — skip Maps, Images, Shopping, etc.
+    if (host === "google.com" && path.indexOf("/search") !== 0) {
+      return;
+    }
 
     chrome.storage.sync.get({ skipSites: null }, function (data) {
       var skipList = data.skipSites === null ? DEFAULT_SKIP : data.skipSites;
@@ -1534,13 +1603,20 @@
   // KEYBOARD HANDLER
   // =============================================
   function handleKeys(e) {
+    // Don't intercept keys while user is typing
     var tag =
       e.target && e.target.tagName ? e.target.tagName.toUpperCase() : "";
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
       return;
     }
-    if (e.target && e.target.isContentEditable) {
-      return;
+    // Walk up the DOM — catch nested divs inside contentEditable editors
+    var node = e.target;
+    while (node) {
+      if (node.isContentEditable) return;
+      var role = node.getAttribute && node.getAttribute("role");
+      if (role === "textbox" || role === "searchbox" || role === "combobox")
+        return;
+      node = node.parentElement;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) {
       return;
@@ -1552,8 +1628,7 @@
       key === "x" ||
       key === "X" ||
       key === "ArrowRight" ||
-      key === "PageDown" ||
-      key === " "
+      key === "PageDown"
     ) {
       e.preventDefault();
       e.stopPropagation();
@@ -2071,11 +2146,11 @@
     }
 
     // ── First button ────────────────────────────
-    barRefs.first = createBarBtn("\u23ee", false);
+    barRefs.first = createBarBtn("⏮", false);
     barEl.appendChild(barRefs.first);
 
     // ── Prev button ─────────────────────────────
-    barRefs.prev = createBarBtn("\u25c4 Prev", false);
+    barRefs.prev = createBarBtn("◀ Prev", false);
     barEl.appendChild(barRefs.prev);
 
     // ── Page number buttons (flex:1 so they share remaining space) ──
@@ -2099,11 +2174,11 @@
     }
 
     // ── Next button ─────────────────────────────
-    barRefs.next = createBarBtn("Next \u25ba", false);
+    barRefs.next = createBarBtn("Next ▶", false);
     barEl.appendChild(barRefs.next);
 
     // ── Last button ─────────────────────────────
-    barRefs.last = createBarBtn("\u23ed", false);
+    barRefs.last = createBarBtn("⏭", false);
     barEl.appendChild(barRefs.last);
 
     // ── Info label ──────────────────────────────
@@ -2196,7 +2271,7 @@
   // ── Creates an ellipsis span for the page window ──
   function createDotSpan() {
     var d = document.createElement("span");
-    d.textContent = "\u2026";
+    d.textContent = "…";
     d.setAttribute(
       "style",
       "display:flex !important;align-items:center !important;" +
@@ -2386,12 +2461,11 @@
           "' style='height:16px;vertical-align:middle;" +
           "margin-right:6px;border-radius:3px;display:inline-block'>"
         : "") +
-      "<strong style='color:#4361ee'>RePage</strong> \u2014 " +
+      "<strong style='color:#4361ee'>RePage</strong> — " +
       modeLabel +
-      "." +
-      "<br>" +
+      ".<br>" +
       "<span style='color:#888;font-size:11px'>" +
-      "Z / \u2190 prev &nbsp;|&nbsp; X / \u2192 next" +
+      "Z / ← prev &nbsp;|&nbsp; X / → next" +
       "</span>";
 
     document.body.appendChild(n);
@@ -2600,6 +2674,11 @@
     startModalWatcher();
     startMonitor();
     startSubScrollWatcher();
+    // AI chat sidebars are full-height so generic filter skips them; attach explicitly
+    if (isAIChat) {
+      setTimeout(attachAIChatSidebars, 2000);
+      setTimeout(attachAIChatSidebars, 5000);
+    }
   }
 
   // =============================================
